@@ -33,6 +33,14 @@ def main():
                     'released one under paths.ckpt())')
     ap.add_argument('--color_ckpt', default=None, help='colour model checkpoint, one on the card VAE of --ckpt (default: '
                     'the released one under paths.ckpt())')
+    # top-5 fork: strands + ribbons from the cards on CUDA (hairdeck.strands); 0 = off (upstream behaviour)
+    ap.add_argument('--strands-per-card', type=int, default=0, help='strands spread across each card (0: no strand output)')
+    ap.add_argument('--strand-points', type=int, default=16, help='points per strand')
+    ap.add_argument('--strand-width-mm', type=float, default=0.35, help='ribbon width of one strand in the GLB')
+    ap.add_argument('--width-scale', type=float, default=1.0, help='scale every card width before the strands are spread')
+    ap.add_argument('--offset-mm', type=float, default=0.0, help='move cards along their outward surface normal (lift / volume)')
+    ap.add_argument('--curl-amp', type=float, default=0.0, help='curl radius as a fraction of the card width (0: none)')
+    ap.add_argument('--curl-cycles', type=float, default=0.0, help='curl turns along the card length')
     a = ap.parse_args()
     names = [os.path.splitext(os.path.basename(f))[0] for f in a.images]
     keys = [os.path.normcase(n) for n in names]
@@ -52,9 +60,36 @@ def main():
                              n_cards=[s['n_cards'] for s in r['samples']], n_chains=[s['n_chains'] for s in r['samples']],
                              timings=r['timings'])
         print(name, 'ok' if r['ok'] else 'FAILED', summary[name]['n_cards'], r['message'], flush=True)
+        if r['ok'] and a.strands_per_card > 0:
+            summary[name]['strands'] = write_strands(os.path.join(a.out, name), [s['seed'] for s in r['samples']], a)
     json.dump(summary, open(os.path.join(a.out, 'summary.json'), 'w'), indent=1)
     if not all(s['ok'] for s in summary.values()):
         sys.exit(f'FAILED: {[n for n, s in summary.items() if not s["ok"]]}')
+
+
+def write_strands(out_dir, seeds, a):
+    """strands_seed<s>.npz + strands_seed<s>.glb next to cards_seed<s>.json (top-5 fork, hairdeck.strands on CUDA)."""
+    import time
+
+    import torch
+
+    from hairdeck.strands import strands, write_glb, write_npz
+
+    out = []
+    for s in seeds:
+        cards = json.load(open(os.path.join(out_dir, f'cards_seed{s}.json')))
+        t = time.perf_counter()
+        P, col = strands(cards, per_card=a.strands_per_card, points=a.strand_points, width_scale=a.width_scale,
+                         offset_m=a.offset_mm / 1000.0, curl_amp=a.curl_amp, curl_cycles=a.curl_cycles, seed=s)
+        torch.cuda.synchronize()
+        gen_ms = 1000 * (time.perf_counter() - t)
+        write_npz(os.path.join(out_dir, f'strands_seed{s}.npz'), P, col, per_card=a.strands_per_card, points=a.strand_points,
+                  width_scale=a.width_scale, offset_mm=a.offset_mm, curl_amp=a.curl_amp, curl_cycles=a.curl_cycles)
+        rep = write_glb(os.path.join(out_dir, f'strands_seed{s}.glb'), P, col, a.strand_width_mm / 1000.0)
+        rep.update(seed=s, generate_ms=round(gen_ms, 1), total_ms=round(1000 * (time.perf_counter() - t), 1))
+        out.append(rep)
+        print(f'  strands seed {s}: {rep}', flush=True)
+    return out
 
 
 if __name__ == '__main__':

@@ -220,3 +220,19 @@ HairDeck uses [CHARM](https://huggingface.co/datasets/hyz317/CHARM), [Dora-VAE](
 
 HairDeck code and checkpoints are licensed under [Apache-2.0](LICENSE).
 Third-party models, code and datasets retain their respective licences.
+
+## top-5 fork additions (seed)
+
+`hairdeck/strands` (added, Apache-2.0): cards -> strands -> ribbons on CUDA (torch), with card edits:
+width scale, offset along the card's outward normal, and curl (helix around the centre line).
+`scripts/image_to_hair.py` gained `--strands-per-card`, `--strand-points`, `--strand-width-mm`, `--width-scale`,
+`--offset-mm`, `--curl-amp` and `--curl-cycles`. With `--strands-per-card > 0` it also writes
+`strands_seed<s>.npz` (points, uint8 colours, parameters) and `strands_seed<s>.glb` beside the cards.
+
+Seeker (RTX PRO 6000), 117 cards:
+- 180k strands x 12 points in 24 ms, ribbons in 2 ms. The numpy reference took 745 + 379 ms.
+- CPU and CUDA strand clouds differ only by the random-seed noise floor.
+- Writing the GLB dominates the total time.
+
+Known limit: the per-card outward sign for `--offset-mm` is taken from the card centroid. It can push front cards over the face.
+Keep `--offset-mm 0` until the offset uses the head proxy's normals.
